@@ -1,36 +1,68 @@
-#include <ESP8266WiFi.h>  
-#include <ESP8266HTTPClient.h>  
-#include <WiFiClient.h>
+#include <ESP8266WiFi.h>
+#include <espnow.h>
 
-const char* ssid = "bil";  
-const char* password = "12345678";
+// GANTI dengan MAC Address Board Penerima 1 dan Board Penerima 2 Anda!
+uint8_t receiver1[] = {0x08, 0xF9, 0xE0, 0x5D, 0x1A, 0xDC};
+uint8_t receiver2[] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
 
-const char* serverName = "192.168.100.52";   
-const byte ldrPin = A0;
+// Definisi struktur data paket instruksi
+typedef struct struct_pesan {
+  int perintahId;
+  int nilaiParameter;
+} struct_pesan;
 
-void setup() {  
-  Serial.begin(115200);  
-  WiFi.mode(WIFI_STA);  
-  WiFi.begin(ssid, password);  
-  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }  
-  Serial.println("\nClient Terhubung ke Wi-Fi!");  
+struct_pesan paketKirim;
+
+unsigned long previousMillis = 0;
+const long interval = 2000; // Transmisi berkala setiap 2 detik
+
+// Callback otomatis saat paket selesai dipancarkan radio
+void OnDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
+           mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+  
+  Serial.print("Kirim paket ke: ");
+  Serial.print(macStr);
+  Serial.print(" | Status: ");
+  if (sendStatus == 0) {
+    Serial.println("Berhasil Diterima");
+  } else {
+    Serial.println("Gagal (Tidak Terjangkau)");
+  }
 }
 
-void loop() {  
-  int ldrValue = analogRead(ldrPin);  
-    
-  if ((WiFi.status() == WL_CONNECTED) && (ldrValue < 300)) {  
-    WiFiClient client;  
-    HTTPClient http;  
-      
-    http.begin(client, serverName);  
-    int httpResponseCode = http.GET();  
-      
-    Serial.print("HTTP Response code: ");  
-    Serial.println(httpResponseCode); 
-      
-    http.end();  
-    delay(10000); 
-  }  
-  delay(2000);  
+void setup() {
+  Serial.begin(115200);
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+
+  // Inisialisasi stack protokol ESP-NOW
+  if (esp_now_init() != 0) {
+    Serial.println("Gagal menginisialisasi ESP-NOW!");
+    return;
+  }
+
+  // Tetapkan peran board sebagai Controller
+  esp_now_set_self_role(ESP_NOW_ROLE_CONTROLLER);
+  esp_now_register_send_cb(OnDataSent);
+
+  // Daftarkan kedua board penerima ke tabel peer internal
+  esp_now_add_peer(receiver1, ESP_NOW_ROLE_SLAVE, 1, NULL, 0);
+  esp_now_add_peer(receiver2, ESP_NOW_ROLE_SLAVE, 1, NULL, 0);
+
+  Serial.println("Controller ESP-NOW Siap!");
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+
+    paketKirim.perintahId = 101;
+    paketKirim.nilaiParameter = random(10, 100);
+
+    // Argumen 0 berarti mengirimkan paket ke seluruh peer yang terdaftar
+    esp_now_send(0, (uint8_t *) &paketKirim, sizeof(paketKirim));
+  }
 }
