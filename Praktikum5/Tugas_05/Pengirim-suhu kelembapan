@@ -1,0 +1,103 @@
+#include <painlessMesh.h>
+#include <DHT.h>
+#include <ArduinoJson.h>
+
+#define MESH_PREFIX   "rasyactk"
+#define MESH_PASSWORD "12345678"
+#define MESH_PORT     5544
+
+#define DHTPIN 2
+#define DHTTYPE DHT11
+
+DHT dht(DHTPIN, DHTTYPE);
+
+const char* nodeName = "Node 1";
+
+Scheduler userScheduler;
+painlessMesh mesh;
+
+void sendMessage();
+Task taskSendMessage(TASK_SECOND * 3, TASK_FOREVER, &sendMessage);
+
+// Mengirim data sensor DHT
+void sendMessage() {
+  float suhu = dht.readTemperature();
+  float kelembapan = dht.readHumidity();
+
+  if (isnan(suhu) || isnan(kelembapan)) {
+    Serial.println("Gagal membaca sensor DHT!");
+    return;
+  }
+
+  StaticJsonDocument<200> doc;
+  doc["node"] = nodeName;
+  doc["tipe"] = "suhu_node";
+  doc["suhu"] = suhu;
+  doc["kelembapan"] = kelembapan;
+
+  String msg;
+  serializeJson(doc, msg);
+
+  mesh.sendBroadcast(msg);
+
+  Serial.println("==========================");
+  Serial.println("Node 1 Mengirim Data DHT");
+  Serial.printf("Suhu       : %.2f C\n", suhu);
+  Serial.printf("Kelembapan : %.2f %%\n", kelembapan);
+  Serial.println("==========================");
+}
+
+// Menerima data dari node lain
+void receivedCallback(uint32_t from, String &msg) {
+  StaticJsonDocument<200> doc;
+
+  DeserializationError error = deserializeJson(doc, msg);
+
+  if (error) {
+    Serial.println("Gagal membaca JSON!");
+    return;
+  }
+
+  String namaNode = doc["node"].as<String>();
+
+  if (namaNode != "") {
+    Serial.print("Data diterima dari ");
+    Serial.println(namaNode);
+  }
+}
+
+// Mendeteksi koneksi baru
+void newConnectionCallback(uint32_t nodeId) {
+  Serial.println("Koneksi Node baru terdeteksi!");
+}
+
+// Mendeteksi perubahan topologi
+void changedConnectionCallback() {
+  Serial.println("Topologi mesh berubah");
+}
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+
+  mesh.setDebugMsgTypes(ERROR | STARTUP);
+
+  mesh.init(MESH_PREFIX, MESH_PASSWORD,
+            &userScheduler, MESH_PORT);
+
+  mesh.onReceive(&receivedCallback);
+  mesh.onNewConnection(&newConnectionCallback);
+  mesh.onChangedConnections(&changedConnectionCallback);
+
+  userScheduler.addTask(taskSendMessage);
+  taskSendMessage.enable();
+
+  Serial.println("==========================");
+  Serial.println("Node 1 Sensor DHT Siap!");
+  Serial.println("Menunggu koneksi Mesh...");
+  Serial.println("==========================");
+}
+
+void loop() {
+  mesh.update();
+}
